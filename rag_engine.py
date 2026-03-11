@@ -11,7 +11,7 @@ from langchain_core.prompts import ChatPromptTemplate
 FAISS_INDEX_PATH     = "./vector_store"
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 GROQ_MODEL_NAME      = "llama-3.3-70b-versatile"
-
+groq_api_key = "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"
 
 def ask_question(
     question    : str,
