@@ -16,11 +16,11 @@ groq_api_key = "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"
 
 
 def ask_question(
-    question     : str,
-    access_dirs  : List[str],    # from DB — all folders user can access
-    groq_api_key : str,
-    scope_type   : str  = "all", # "all" | "folder" | "file"
-    scope_value  : str  = None   # folder name OR filename depending on scope
+    question    : str,
+    access_dirs : List[str],
+    groq_api_key: str,
+    scope_type  : str           = "all",   # ← ADDED
+    scope_value : Optional[str] = None     # ← ADDED
 ) -> dict:
     """
     scope_type = "all"    → search all accessible docs
@@ -38,18 +38,22 @@ def ask_question(
     llm         = ChatGroq(model=GROQ_MODEL_NAME, temperature=0.1)
     embeddings  = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
     vectorstore = FAISS.load_local(
-        FAISS_INDEX_PATH, embeddings,
+        FAISS_INDEX_PATH,
+        embeddings,
         allow_dangerous_deserialization=True
     )
 
-    # ─────────────────────────────────────────────
-    # RBAC FILTER — based on scope_type
-    # ─────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────
+    # RBAC FILTER
+    # Step 1 — Always check base access first
+    # Step 2 — Then apply scope on top
+    # ─────────────────────────────────────────────────────
     def rbac_filter(metadata: dict) -> bool:
         chunk_folder   = metadata.get("read_access", "")
-        chunk_filename = metadata.get("filename", "")
+        chunk_filename = metadata.get("filename",    "")
 
-        # STEP 1 — Always check base access first
+        # STEP 1 — Base access check
+        # Does this chunk belong to a folder user can access?
         has_base_access = any(
             chunk_folder.startswith(allowed_dir)
             for allowed_dir in access_dirs
@@ -58,15 +62,18 @@ def ask_question(
         if not has_base_access:
             return False  # blocked regardless of scope
 
-        # STEP 2 — Apply scope filter on top of access
+        # STEP 2 — Scope filter on top of access
         if scope_type == "all":
-            return True                          # all accessible docs
+            # All accessible docs
+            return True
 
         elif scope_type == "folder":
-            return chunk_folder == scope_value   # only this folder
+            # Only chunks from selected folder
+            return chunk_folder == scope_value
 
         elif scope_type == "file":
-            return chunk_filename == scope_value # only this file
+            # Only chunks from selected PDF file
+            return chunk_filename == scope_value
 
         return False
 
@@ -75,9 +82,12 @@ def ask_question(
     )
 
     system_prompt = (
-        "You are a university assistant. Use the following retrieved context "
-        "to answer the student's question. If the answer is not in the context, "
-        "say you don't have that information in the selected documents.\n\n"
+        "You are a university assistant. "
+        "Use the following retrieved context "
+        "to answer the student's question. "
+        "If the answer is not in the context, "
+        "say you don't have that information "
+        "in the selected documents.\n\n"
         "<context>\n{context}\n</context>"
     )
 
@@ -88,8 +98,8 @@ def ask_question(
 
     qa_chain  = create_stuff_documents_chain(llm, prompt)
     rag_chain = create_retrieval_chain(retriever, qa_chain)
-    response  = rag_chain.invoke({"input": question})
 
+    response       = rag_chain.invoke({"input": question})
     retrieved_docs = response.get("context", [])
 
     return {
