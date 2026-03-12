@@ -13,15 +13,19 @@ EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 GROQ_MODEL_NAME      = "llama-3.3-70b-versatile"
 groq_api_key = "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"
 
+
+
 def ask_question(
-    question    : str,
-    access_dirs : List[str],   # from DB — what folders user can access
-    groq_api_key: str
+    question     : str,
+    access_dirs  : List[str],    # from DB — all folders user can access
+    groq_api_key : str,
+    scope_type   : str  = "all", # "all" | "folder" | "file"
+    scope_value  : str  = None   # folder name OR filename depending on scope
 ) -> dict:
     """
-    Main RAG function
-    access_dirs comes from DB after user login
-    Filter applied using these dirs — pre-filtering
+    scope_type = "all"    → search all accessible docs
+    scope_type = "folder" → search only chosen folder
+    scope_type = "file"   → search only chosen PDF file
     """
     os.environ["GROQ_API_KEY"] = groq_api_key
 
@@ -31,7 +35,6 @@ def ask_question(
             "retrieved_docs": []
         }
 
-    # Load models
     llm         = ChatGroq(model=GROQ_MODEL_NAME, temperature=0.1)
     embeddings  = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
     vectorstore = FAISS.load_local(
@@ -39,19 +42,33 @@ def ask_question(
         allow_dangerous_deserialization=True
     )
 
-    # RBAC FILTER
-    # Checks if chunk's folder is in user's allowed access_dirs
+    # ─────────────────────────────────────────────
+    # RBAC FILTER — based on scope_type
+    # ─────────────────────────────────────────────
     def rbac_filter(metadata: dict) -> bool:
-        chunk_folder = metadata.get("read_access", "")
-        return any(
+        chunk_folder   = metadata.get("read_access", "")
+        chunk_filename = metadata.get("filename", "")
+
+        # STEP 1 — Always check base access first
+        has_base_access = any(
             chunk_folder.startswith(allowed_dir)
             for allowed_dir in access_dirs
         )
-    # startswith handles hierarchy:
-    # access_dirs = ["academic/CSE"]
-    # chunk_folder = "academic/CSE" → True ✅
-    # chunk_folder = "academic/ECE" → False ❌
-    # chunk_folder = "administration" → False ❌
+
+        if not has_base_access:
+            return False  # blocked regardless of scope
+
+        # STEP 2 — Apply scope filter on top of access
+        if scope_type == "all":
+            return True                          # all accessible docs
+
+        elif scope_type == "folder":
+            return chunk_folder == scope_value   # only this folder
+
+        elif scope_type == "file":
+            return chunk_filename == scope_value # only this file
+
+        return False
 
     retriever = vectorstore.as_retriever(
         search_kwargs={"filter": rbac_filter, "k": 5}
@@ -60,7 +77,7 @@ def ask_question(
     system_prompt = (
         "You are a university assistant. Use the following retrieved context "
         "to answer the student's question. If the answer is not in the context, "
-        "say you don't have that information in the accessible documents.\n\n"
+        "say you don't have that information in the selected documents.\n\n"
         "<context>\n{context}\n</context>"
     )
 
